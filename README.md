@@ -32,7 +32,7 @@ ResearchGate: https://www.researchgate.net/publication/377412526_Secure_Targeted
 <br>
 
 **Note:**
-Video Demo: https://drive.google.com/file/d/1Up6oQjujIbyNPAYDSjx6sdzSWDBnWHeD/view?usp=sharing  <br>
+Video Demo: https://drive.google.com/file/d/1o5_sD-wZ6eUF36q5uJMRgl8Ds2YV0FKW/view?usp=sharing <br>
 More implementation details can be found in the paper. However, this proejct can also be implemented in Virtulization environment (e.g., Virtual Box, VMWare).
 <br>
 <br>
