@@ -67,7 +67,10 @@ def install_sw(name, ct, pk, sk, pi, file):
 
 @app.route('/updates/new', methods=['POST'])
 def post_updates_new():
-    values = request.values
+    # Try to get JSON data first, fall back to form/URL parameters
+    values = request.get_json(silent=True)
+    if values is None:
+        values = request.values
 
     required = ['name', 'file', 'file_hash', 'ct', 'pi', 'pk']
 

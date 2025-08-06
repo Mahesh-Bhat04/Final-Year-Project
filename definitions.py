@@ -77,12 +77,14 @@ class Blockchain:
         }
 
         try:
-            request = requests.post("http://" + rpi_address + "/updates/new", params=update)
+            # Send as JSON with proper headers
+            headers = {'Content-Type': 'application/json'}
+            request = requests.post("http://" + rpi_address + "/updates/new", json=update, headers=headers)
             print("Request Response Type: " + str(type(request.text)))
-            print("Request Response: " + request.text[200:])
+            print("Request Response: " + request.text[:200])  # Fixed: show first 200 chars
 
         except requests.exceptions.Timeout as e:
-            print("ERROR: RPi " + rpi_address + " - Timeout " + e)
+            print("ERROR: RPi " + rpi_address + " - Timeout " + str(e))
             return False
         except requests.exceptions.ConnectionError:
             print("ERROR: RPi " + rpi_address + " - Failed to establish connection")
@@ -98,7 +100,7 @@ class Blockchain:
 
             _name = transaction['name']
             _file = transaction['file']
-            _hash = transaction['hash']
+            _file_hash = transaction['file_hash']  # Fixed: correct key name
             _ct = transaction['ct']
             _pi = transaction['pi']
             _pk = transaction['pk']
@@ -232,7 +234,7 @@ class Blockchain:
                         max_length = length
                         new_chain = chain
             except requests.exceptions.Timeout as e:
-                print("ERROR: Node " + node + " - Timeout " + e)
+                print("ERROR: Node " + node + " - Timeout " + str(e))
                 return False
             except requests.exceptions.ConnectionError as ce:
                 print("ERROR: Node " + node + " - Failed to establish connection")
@@ -249,11 +251,13 @@ class Blockchain:
 
         for n in self.nodes:
             try:
-                request = requests.post("http://" + n + "/blocks/new", params=block)
+                # Send as JSON with proper headers
+                headers = {'Content-Type': 'application/json'}
+                request = requests.post("http://" + n + "/blocks/new", json=block, headers=headers)
                 print("Request Response Type: " + str(type(request.text)))
-                print("Request Response: " + request.text[200:])
+                print("Request Response: " + request.text[:200])  # Fixed: show first 200 chars, not from 200th
             except requests.exceptions.Timeout as e:
-                print("ERROR: Node " + n + " - Timeout " + e)
+                print("ERROR: Node " + n + " - Timeout " + str(e))
                 return False
             except requests.exceptions.ConnectionError as ce:
                 print("ERROR: Node " + n + " - Failed to establish connection")
@@ -265,11 +269,13 @@ class Blockchain:
 
         for n in self.nodes:
             try:
-                request = requests.post("http://" + n + "/transactions/new", params=transaction)
+                # Send as JSON with proper headers
+                headers = {'Content-Type': 'application/json'}
+                request = requests.post("http://" + n + "/transactions/new", json=transaction, headers=headers)
                 print("Request Response Type: " + str(type(request.text)))
-                print("Request Response: " + request.text[200:])
+                print("Request Response: " + request.text[:200])  # Fixed: show first 200 chars, not from 200th
             except requests.exceptions.Timeout as e:
-                print("ERROR: Node " + n + " - Timeout " + e)
+                print("ERROR: Node " + n + " - Timeout " + str(e))
                 return False
             except requests.exceptions.ConnectionError as ce:
                 print("ERROR: Node " + n + " - Failed to establish connection")

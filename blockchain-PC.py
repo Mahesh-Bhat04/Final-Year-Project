@@ -99,7 +99,7 @@ else:
     sk_read.close()
 
 if k_signpath.is_file():
-    print("Reading File sk.txt")
+    print("Reading File k_sign.txt")
     k_sign_read = open("k_sign.txt", 'r')
     k_sign_str = k_sign_read.read()  # it's a string
     k_sign_bytes = k_sign_str.encode("utf8")
@@ -107,7 +107,7 @@ if k_signpath.is_file():
     k_sign_read.close()
 
 else:
-    print("Writing file File sk.txt")
+    print("Writing file k_sign.txt")
     k_sign_read = open("k_sign.txt", 'w')
     k_sign_read.write(str(objectToBytes(k_sign, groupObj), 'utf-8'))  # saving as a string
     k_sign_read.close()
@@ -132,7 +132,10 @@ blockchain_spread = threading.Thread(name="spread", target=periodic_spread, daem
 
 @app.route('/blocks/new', methods=['POST'])
 def blocks_new():
-    values = request.values
+    # Try to get JSON data first, fall back to form/URL parameters
+    values = request.get_json(silent=True)
+    if values is None:
+        values = request.values
 
     # Create a new Block
     added = blockchain.new_block(_transactions=values)
@@ -175,8 +178,10 @@ def mine():
 
 @app.route('/transactions/new', methods=['POST'])
 def new_transaction():   # from Definition
-    values = request.get_json()
-    values = request.values
+    # Try to get JSON data first, fall back to form/URL parameters
+    values = request.get_json(silent=True)
+    if values is None:
+        values = request.values
 
     required = ['name', 'file', 'file_hash', 'ct', 'pi', 'pk']
     if not all(k in values for k in required):
