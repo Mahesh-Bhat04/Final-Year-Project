@@ -264,6 +264,10 @@ def add_rpi():
     _node_address = simpledialog.askstring(_title, "RPi Address:")
     if (blockchain.register_rpi(address = _node_address) == True): # Definitions
         messagebox.showinfo(title=_title, message="RPi added to RPi list:\nCurrent RPis: " + str(blockchain.rpis.__len__()))
+        # Optionally send keys immediately
+        result = messagebox.askyesno("Send Keys", "Do you want to send cryptographic keys to this RPi now?")
+        if result:
+            send_keys_to_rpi(_node_address)
 
 def _filepath_get(window, filename, filepath):
     file = filedialog.askopenfile(title="Select File")
@@ -357,6 +361,91 @@ def verify_block_action(current_transaction, text_keygen_time, text_sign_verif_t
     blockchain.new_block(blockchain.last_block['previous_hash']) # new_block >> from Definition
 
 # Need to understand how things are sending to RPi.
+def send_keys_to_rpi(rpi_address=None):
+    """Send cryptographic keys to one or all RPi nodes"""
+    import requests
+    
+    # Read keys from files
+    keys_to_send = {}
+    
+    try:
+        # Read pk
+        with open("pk.txt", 'r') as f:
+            keys_to_send['pk'] = f.read()
+        
+        # Read sk
+        with open("sk.txt", 'r') as f:
+            keys_to_send['sk'] = f.read()
+        
+        # Read k_sign if exists
+        if os.path.exists("k_sign.txt"):
+            with open("k_sign.txt", 'r') as f:
+                keys_to_send['k_sign'] = f.read()
+        
+        # Read msk if exists (optional)
+        if os.path.exists("msk.txt"):
+            with open("msk.txt", 'r') as f:
+                keys_to_send['msk'] = f.read()
+    
+    except Exception as e:
+        print(f"ERROR - Could not read key files: {e}")
+        messagebox.showerror("Key Distribution", f"Failed to read key files: {e}")
+        return False
+    
+    # Determine which RPis to send to
+    if rpi_address:
+        rpis_to_update = [rpi_address]
+    else:
+        rpis_to_update = list(blockchain.rpis.keys())
+    
+    if len(rpis_to_update) == 0:
+        print("ERROR - No RPis registered")
+        messagebox.showwarning("Key Distribution", "No RPis registered. Please add RPi nodes first.")
+        return False
+    
+    success_count = 0
+    for rpi in rpis_to_update:
+        try:
+            # Clean up the address if needed
+            if not rpi.startswith("http://"):
+                rpi_url = f"http://{rpi}"
+            else:
+                rpi_url = rpi
+            
+            # Add port 5001 if not specified
+            if ":5001" not in rpi_url:
+                if ":" in rpi_url.split("//")[1]:
+                    # Has a port but not 5001
+                    pass
+                else:
+                    # No port specified, add 5001
+                    rpi_url = rpi_url.replace(rpi, rpi + ":5001")
+            
+            print(f"INFO - Sending keys to RPi: {rpi_url}")
+            
+            headers = {'Content-Type': 'application/json'}
+            response = requests.post(f"{rpi_url}/keys/receive", json=keys_to_send, headers=headers, timeout=5)
+            
+            if response.status_code == 200:
+                print(f"SUCCESS - Keys sent to {rpi}")
+                success_count += 1
+            else:
+                print(f"ERROR - Failed to send keys to {rpi}: {response.text}")
+                
+        except requests.exceptions.ConnectionError:
+            print(f"ERROR - Could not connect to RPi at {rpi}")
+        except requests.exceptions.Timeout:
+            print(f"ERROR - Timeout connecting to RPi at {rpi}")
+        except Exception as e:
+            print(f"ERROR - Failed to send keys to {rpi}: {e}")
+    
+    if success_count > 0:
+        messagebox.showinfo("Key Distribution", f"Successfully sent keys to {success_count}/{len(rpis_to_update)} RPi(s)")
+    else:
+        messagebox.showerror("Key Distribution", "Failed to send keys to any RPi")
+    
+    return success_count > 0
+
 def send_update_button_click(file_name):
     print("INFO - Retrieving data for file " + file_name)
     values = {}
@@ -465,6 +554,7 @@ def _create_main_window_structure():
     Connection_Menu.add_separator()
     Connection_Menu.add_command(label="Add RPi", command=add_rpi)
     Connection_Menu.add_command(label="Print RPi list", command=print_rpi)
+    Connection_Menu.add_command(label="Send Keys to RPIs", command=lambda: send_keys_to_rpi())
     Connection_Menu.add_separator()
     Connection_Menu.add_command(label="Connect Blockchain", command=blockchain_thread.start)
     Connection_Menu.add_command(label="Disconnect and Exit", command=disconnect_exit)

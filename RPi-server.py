@@ -8,6 +8,8 @@ import hashlib
 import base64
 import subprocess
 import urllib.parse
+from pathlib import Path
+from charm.core.engine.util import objectToBytes, bytesToObject
 
 app = Flask(__name__)
 
@@ -15,7 +17,61 @@ groupObj = PairingGroup('SS512')
 cpabe = CPabe_BSW07(groupObj)
 hyb_abe = HybridABEnc(cpabe, groupObj)
 
+# Initialize keys at startup
+def initialize_keys():
+    """Initialize or load cryptographic keys"""
+    global pk, msk, sk, k_sign
+    
+    pkpath = Path("pk.txt")
+    mskpath = Path("msk.txt")
+    skpath = Path("sk.txt")
+    k_signpath = Path("k_sign.txt")
+    
+    # Check if all key files exist
+    if pkpath.is_file() and skpath.is_file():
+        print("Loading existing keys...")
+        
+        # Load pk
+        with open("pk.txt", 'r') as f:
+            pk_str = f.read()
+            pk_bytes = pk_str.encode("utf8")
+            pk = bytesToObject(pk_bytes, groupObj)
+        
+        # Load sk
+        with open("sk.txt", 'r') as f:
+            sk_str = f.read()
+            sk_bytes = sk_str.encode("utf8")
+            sk = bytesToObject(sk_bytes, groupObj)
+        
+        # Load k_sign if exists
+        if k_signpath.is_file():
+            with open("k_sign.txt", 'r') as f:
+                k_sign_str = f.read()
+                k_sign_bytes = k_sign_str.encode("utf8")
+                k_sign = bytesToObject(k_sign_bytes, groupObj)
+        else:
+            k_sign = None
+            
+        # Load msk if exists (might not be needed on RPi)
+        if mskpath.is_file():
+            with open("msk.txt", 'r') as f:
+                msk_str = f.read()
+                msk_bytes = msk_str.encode("utf8")
+                msk = bytesToObject(msk_bytes, groupObj)
+        else:
+            msk = None
+            
+        print("Keys loaded successfully")
+    else:
+        print("Warning: Key files not found. RPi will wait to receive keys from PC node.")
+        print("Make sure to register this RPi with a PC node to receive keys.")
+        pk = None
+        sk = None
+        k_sign = None
+        msk = None
+
 def start_listening():
+    initialize_keys()
     app.app_context()
     app.run(host='0.0.0.0', port=5001)
 
@@ -25,6 +81,61 @@ def transactions():
         'message': "PONG!",
     }
     return jsonify(response), 200
+
+@app.route('/keys/receive', methods=['POST'])
+def receive_keys():
+    """Receive cryptographic keys from PC node"""
+    global pk, sk, k_sign, msk
+    
+    # Try to get JSON data first, fall back to form/URL parameters
+    values = request.get_json(silent=True)
+    if values is None:
+        values = request.values
+    
+    required = ['pk', 'sk']  # Minimum required keys
+    if not all(k in values for k in required):
+        return jsonify({'error': 'Missing required keys'}), 400
+    
+    try:
+        # Save and load pk
+        with open("pk.txt", 'w') as f:
+            f.write(values['pk'])
+        pk_bytes = values['pk'].encode("utf8")
+        pk = bytesToObject(pk_bytes, groupObj)
+        
+        # Save and load sk
+        with open("sk.txt", 'w') as f:
+            f.write(values['sk'])
+        sk_bytes = values['sk'].encode("utf8")
+        sk = bytesToObject(sk_bytes, groupObj)
+        
+        # Save k_sign if provided
+        if 'k_sign' in values:
+            with open("k_sign.txt", 'w') as f:
+                f.write(values['k_sign'])
+            k_sign_bytes = values['k_sign'].encode("utf8")
+            k_sign = bytesToObject(k_sign_bytes, groupObj)
+        
+        # Save msk if provided (usually not needed on RPi)
+        if 'msk' in values:
+            with open("msk.txt", 'w') as f:
+                f.write(values['msk'])
+            msk_bytes = values['msk'].encode("utf8")
+            msk = bytesToObject(msk_bytes, groupObj)
+        
+        print("Successfully received and saved keys from PC node")
+        
+        # Update UI if available
+        try:
+            text_keygen_time.set("Keys received from PC node")
+        except:
+            pass
+            
+        return jsonify({'message': 'Keys received successfully'}), 200
+        
+    except Exception as e:
+        print(f"Error receiving keys: {e}")
+        return jsonify({'error': str(e)}), 500
 
 def install_sw(name, ct, pk, sk, pi, file):
     (file_pr_, delta_pr) = hyb_abe.decrypt(pk, sk, ct)
@@ -67,12 +178,16 @@ def install_sw(name, ct, pk, sk, pi, file):
 
 @app.route('/updates/new', methods=['POST'])
 def post_updates_new():
+    global pk, sk  # Use global keys if available
+    
     # Try to get JSON data first, fall back to form/URL parameters
     values = request.get_json(silent=True)
     if values is None:
         values = request.values
 
     required = ['name', 'file', 'file_hash', 'ct', 'pi', 'pk']
+    if not all(k in values for k in required):
+        return 'Missing values', 400
 
     # write ct
     print("Writing file as ct")
@@ -89,30 +204,31 @@ def post_updates_new():
     name = values['name']
     file = values['file']
     file_hash = values['file_hash']
-
     pi = values['pi']
 
     ct_str = values['ct']
     ct_bytes = ct_str.encode("utf8")
     ct = bytesToObject(ct_bytes, groupObj)
-    # print(ct)
 
     pk_str = values['pk']
     pk_bytes = pk_str.encode("utf8")
     pk = bytesToObject(pk_bytes, groupObj)
 
-    if not all(k in values for k in required):
-        return 'Missing values', 400
-
-    print("Reading sk from saved file")
-    sk_read = open("sk.txt", 'r')
-    sk_str = sk_read.read()  # it's a string
-    sk_bytes = sk_str.encode("utf8")
-    sk = bytesToObject(sk_bytes, groupObj)
-    sk_read.close()
+    # Check if sk exists, either from initialization or needs to be loaded
+    if sk is None:
+        if not os.path.exists("sk.txt"):
+            print("ERROR - Secret key (sk.txt) not found!")
+            print("Please ensure this RPi has received keys from a PC node.")
+            return 'Secret key not found - RPi needs keys from PC node', 500
+        
+        print("Reading sk from saved file")
+        sk_read = open("sk.txt", 'r')
+        sk_str = sk_read.read()
+        sk_bytes = sk_str.encode("utf8")
+        sk = bytesToObject(sk_bytes, groupObj)
+        sk_read.close()
+    
     print("INFO - Received message...")
-    # if pi == pi_pr
-    # print("Successfully Signed.")
     if install_sw(name, ct, pk, sk, pi, file):
         return 'File reached!', 200
     else:
