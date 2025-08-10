@@ -14,6 +14,14 @@ import requests
 from flask import Flask, jsonify, request
 from pyclamd import *
 import base64
+import json
+
+# Optional MQTT support
+try:
+    import paho.mqtt.client as mqtt
+    MQTT_AVAILABLE = True
+except Exception:
+    MQTT_AVAILABLE = False
 
 # We will mine automatically every 15 seconds and then propagate blockchain with other nodes
 # Working, need to connect with Blockchain First!
@@ -466,7 +474,44 @@ def send_update_button_click(file_name):
     for rpi_address in blockchain.rpis:
         print("INFO - Sending " + values['name'] + " to RPi " + rpi_address)
         blockchain.send_updates(rpi_address, values['name'], values['file'], values['file_hash'],
-                                values['ct'], values['pi'], values['pk']) # send_updates >> from Defination
+                                values['ct'], values['pi'], values['pk']) # send_updates >> from Definition
+
+def send_update_mqtt_button_click(file_name):
+    if not MQTT_AVAILABLE:
+        messagebox.showerror("MQTT", "paho-mqtt is not installed on this node.")
+        return
+    print("INFO - Retrieving data for file " + file_name + " (MQTT)")
+    payload = {}
+    for blocks in blockchain.chain:
+        for trans in blocks['transactions']:
+            if trans['name'] == file_name:
+                payload = {
+                    'name': trans['name'],
+                    'file': trans['file'],
+                    'file_hash': trans['file_hash'],
+                    'ct': trans['ct'],
+                    'pi': trans['pi'],
+                    'pk': trans['pk']
+                }
+                print("INFO - File found in block " + str(blocks['index']))
+                break
+    if not payload:
+        messagebox.showerror("MQTT", "File not found in chain")
+        return
+
+    broker = os.environ.get('MQTT_BROKER', 'localhost')
+    port = int(os.environ.get('MQTT_PORT', '1883'))
+    topic = os.environ.get('MQTT_TOPIC', 'updates/all')
+    try:
+        client = mqtt.Client()
+        client.connect(broker, port, 60)
+        client.loop_start()
+        client.publish(topic, json.dumps(payload), qos=0, retain=False)
+        client.loop_stop()
+        print(f"INFO - Published MQTT message to {topic} at {broker}:{port}")
+        messagebox.showinfo("MQTT", f"Published to {topic}")
+    except Exception as e:
+        messagebox.showerror("MQTT", f"Failed to publish: {e}")
 
 # Sending Updates to RPi, can we send sk seprately and save the sk at RPi?
 # Need to understand how it's working.
@@ -482,7 +527,8 @@ def send_update():
     cb = ttk.Combobox(window_su, values=files)
     cb.place(x=_column(2), y=_line(1))
 
-    button_send = Button(window_su, text="Send", command=lambda: send_update_button_click(cb.get())).place(x=_column(3)-15, y=_line(2))
+    button_send = Button(window_su, text="Send (HTTP)", command=lambda: send_update_button_click(cb.get())).place(x=_column(3)-130, y=_line(2))
+    button_send_mqtt = Button(window_su, text="Send (MQTT)", command=lambda: send_update_mqtt_button_click(cb.get())).place(x=_column(3)-15, y=_line(2))
 
 # def verify_software():
 def verify_file():

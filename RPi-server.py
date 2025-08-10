@@ -10,6 +10,14 @@ import subprocess
 import urllib.parse
 from pathlib import Path
 from charm.core.engine.util import objectToBytes, bytesToObject
+import json
+
+# Optional MQTT support
+try:
+    import paho.mqtt.client as mqtt
+    MQTT_AVAILABLE = True
+except Exception:
+    MQTT_AVAILABLE = False
 
 app = Flask(__name__)
 
@@ -74,6 +82,93 @@ def start_listening():
     initialize_keys()
     app.app_context()
     app.run(host='0.0.0.0', port=5001)
+
+# MQTT configuration (overridable via env)
+MQTT_BROKER = os.environ.get('MQTT_BROKER', 'localhost')
+MQTT_PORT = int(os.environ.get('MQTT_PORT', '1883'))
+
+def process_update(values):
+    """Common processing for updates received via HTTP or MQTT."""
+    required = ['name', 'file', 'file_hash', 'ct', 'pi', 'pk']
+    if not all(k in values for k in required):
+        print("Missing values in update payload")
+        return False
+
+    try:
+        print("Writing file as ct")
+        with open("ct", 'w') as ct_write:
+            ct_write.write(values['ct'])
+        print("Writing file as pk.txt")
+        with open("pk.txt", 'w') as pk_write:
+            pk_write.write(values['pk'])
+    except Exception as e:
+        print(f"ERROR writing ct/pk files: {e}")
+        return False
+
+    name = values['name']
+    file = values['file']
+    pi = values['pi']
+
+    try:
+        ct = bytesToObject(values['ct'].encode('utf8'), groupObj)
+        pk_local = bytesToObject(values['pk'].encode('utf8'), groupObj)
+    except Exception as e:
+        print(f"ERROR decoding ct/pk: {e}")
+        return False
+
+    global sk
+    if sk is None:
+        if not os.path.exists("sk.txt"):
+            print("ERROR - Secret key (sk.txt) not found!")
+            print("Please ensure this RPi has received keys from a PC node.")
+            return False
+        try:
+            print("Reading sk from saved file")
+            with open("sk.txt", 'r') as sk_read:
+                sk_str = sk_read.read()
+                sk = bytesToObject(sk_str.encode('utf8'), groupObj)
+        except Exception as e:
+            print(f"ERROR reading sk.txt: {e}")
+            return False
+
+    print("INFO - Received message (HTTP/MQTT)...")
+    return install_sw(name, ct, pk_local, sk, pi, file)
+
+def start_mqtt(node_id):
+    if not MQTT_AVAILABLE:
+        print("MQTT not available (paho-mqtt not installed). Skipping MQTT listener.")
+        return
+
+    topics = [("updates/all", 0), (f"updates/{node_id}", 0)]
+
+    def on_connect(client, userdata, flags, rc):
+        if rc == 0:
+            print(f"MQTT connected to {MQTT_BROKER}:{MQTT_PORT}")
+            for t, qos in topics:
+                client.subscribe(t, qos)
+                print(f"Subscribed to MQTT topic: {t}")
+        else:
+            print(f"MQTT connection failed with code {rc}")
+
+    def on_message(client, userdata, msg):
+        try:
+            payload = msg.payload.decode('utf-8')
+            values = json.loads(payload)
+            print(f"MQTT message on {msg.topic}")
+            ok = process_update(values)
+            print("MQTT update processed" if ok else "MQTT update failed")
+        except Exception as e:
+            print(f"ERROR processing MQTT message: {e}")
+
+    client = mqtt.Client()
+    client.on_connect = on_connect
+    client.on_message = on_message
+    try:
+        client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    except Exception as e:
+        print(f"MQTT connect error: {e}")
+        return
+    client.loop_start()
 
 @app.route('/ping', methods=['GET'])
 def transactions():
@@ -257,4 +352,7 @@ entry_keygen_time = Entry(main_window, textvariable=text_keygen_time).place(x=_c
 
 listening_thread = threading.Thread(name="listening", target=start_listening, daemon=True)
 listening_thread.start()
+if MQTT_AVAILABLE:
+    mqtt_thread = threading.Thread(name="mqtt", target=lambda: start_mqtt(node_identifier), daemon=True)
+    mqtt_thread.start()
 mainloop()
