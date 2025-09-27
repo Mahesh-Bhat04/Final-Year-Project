@@ -87,6 +87,14 @@ def start_listening():
 MQTT_BROKER = os.environ.get('MQTT_BROKER', 'localhost')
 MQTT_PORT = int(os.environ.get('MQTT_PORT', '1883'))
 
+def read_epoch_file():
+    try:
+        if os.path.exists('epoch.txt'):
+            return int(open('epoch.txt').read().strip())
+    except Exception:
+        pass
+    return 1
+
 def process_update(values):
     """Common processing for updates received via HTTP or MQTT."""
     required = ['name', 'file', 'file_hash', 'ct', 'pi', 'pk']
@@ -108,6 +116,7 @@ def process_update(values):
     name = values['name']
     file = values['file']
     pi = values['pi']
+    msg_epoch = int(values.get('epoch', read_epoch_file()))
 
     try:
         ct = bytesToObject(values['ct'].encode('utf8'), groupObj)
@@ -116,23 +125,31 @@ def process_update(values):
         print(f"ERROR decoding ct/pk: {e}")
         return False
 
-    global sk
-    if sk is None:
-        if not os.path.exists("sk.txt"):
-            print("ERROR - Secret key (sk.txt) not found!")
-            print("Please ensure this RPi has received keys from a PC node.")
-            return False
-        try:
-            print("Reading sk from saved file")
-            with open("sk.txt", 'r') as sk_read:
-                sk_str = sk_read.read()
-                sk = bytesToObject(sk_str.encode('utf8'), groupObj)
-        except Exception as e:
-            print(f"ERROR reading sk.txt: {e}")
-            return False
+    # Load epoch-specific secret key if available; fallback to default
+    sk_path_epoch = f"sk_{msg_epoch}.txt"
+    try:
+        if os.path.exists(sk_path_epoch):
+            with open(sk_path_epoch, 'r') as skf:
+                sk_epoch = bytesToObject(skf.read().encode('utf8'), groupObj)
+        else:
+            if not os.path.exists("sk.txt"):
+                print("ERROR - Secret key not found (sk.txt / sk_<epoch>.txt)")
+                return False
+            with open("sk.txt", 'r') as skf:
+                sk_epoch = bytesToObject(skf.read().encode('utf8'), groupObj)
+    except Exception as e:
+        print(f"ERROR loading epoch secret key: {e}")
+        return False
+
+    # Enforce epoch acceptance window (current or previous)
+    current_epoch = read_epoch_file()
+    acceptable_epochs = {current_epoch, max(1, current_epoch - 1)}
+    if msg_epoch not in acceptable_epochs:
+        print(f"Rejected message due to epoch mismatch. msg_epoch={msg_epoch} current={current_epoch}")
+        return False
 
     print("INFO - Received message (HTTP/MQTT)...")
-    return install_sw(name, ct, pk_local, sk, pi, file)
+    return install_sw(name, ct, pk_local, sk_epoch, pi, file)
 
 def start_mqtt(node_id):
     if not MQTT_AVAILABLE:
@@ -192,15 +209,24 @@ def receive_keys():
         return jsonify({'error': 'Missing required keys'}), 400
     
     try:
-        # Save and load pk
+        # Save epoch if provided
+        epoch = int(values.get('epoch', read_epoch_file()))
+        with open('epoch.txt', 'w') as ef:
+            ef.write(str(epoch))
+
+        # Save and load pk (current) and versioned
         with open("pk.txt", 'w') as f:
             f.write(values['pk'])
+        with open(f"pk_{epoch}.txt", 'w') as fpkv:
+            fpkv.write(values['pk'])
         pk_bytes = values['pk'].encode("utf8")
         pk = bytesToObject(pk_bytes, groupObj)
         
-        # Save and load sk
+        # Save and load sk (current) and versioned
         with open("sk.txt", 'w') as f:
             f.write(values['sk'])
+        with open(f"sk_{epoch}.txt", 'w') as fskv:
+            fskv.write(values['sk'])
         sk_bytes = values['sk'].encode("utf8")
         sk = bytesToObject(sk_bytes, groupObj)
         
@@ -208,6 +234,8 @@ def receive_keys():
         if 'k_sign' in values:
             with open("k_sign.txt", 'w') as f:
                 f.write(values['k_sign'])
+            with open(f"k_sign_{epoch}.txt", 'w') as fksv:
+                fksv.write(values['k_sign'])
             k_sign_bytes = values['k_sign'].encode("utf8")
             k_sign = bytesToObject(k_sign_bytes, groupObj)
         

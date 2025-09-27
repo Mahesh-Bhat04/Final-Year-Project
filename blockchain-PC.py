@@ -15,6 +15,22 @@ from flask import Flask, jsonify, request
 from pyclamd import *
 import base64
 import json
+# Epoch management
+EPOCH_FILE = os.environ.get('EPOCH_FILE', 'epoch.txt')
+def read_epoch():
+    try:
+        if os.path.exists(EPOCH_FILE):
+            return int(open(EPOCH_FILE).read().strip())
+    except Exception:
+        pass
+    return 1
+
+def write_epoch(epoch):
+    try:
+        open(EPOCH_FILE, 'w').write(str(epoch))
+        return True
+    except Exception:
+        return False
 
 # Optional MQTT support
 try:
@@ -316,7 +332,8 @@ def _upload_file(window, filepath, filename, text_keygen, text_keygentime, text_
     _hash = hashlib.sha256(_file).hexdigest()
     _ct = str(objectToBytes(ct, groupObj), 'utf-8')
 
-    _newblock = blockchain.new_transaction(filename, _file_str, _hash, _ct, _pi, _pk)
+    current_epoch = read_epoch()
+    _newblock = blockchain.new_transaction(filename, _file_str, _hash, _ct, _pi, _pk, epoch=current_epoch)
 
     # Fill form fields
     text_keygen.set(str(objectToBytes(pk,groupObj), 'utf-8'))
@@ -394,6 +411,20 @@ def send_keys_to_rpi(rpi_address=None):
         if os.path.exists("msk.txt"):
             with open("msk.txt", 'r') as f:
                 keys_to_send['msk'] = f.read()
+        # Include current epoch
+        keys_to_send['epoch'] = read_epoch()
+
+        # Also attach versioned keys if present (best effort)
+        ep = keys_to_send['epoch']
+        try:
+            if os.path.exists(f"pk_{ep}.txt"):
+                keys_to_send['pk'] = open(f"pk_{ep}.txt", 'r').read()
+            if os.path.exists(f"sk_{ep}.txt"):
+                keys_to_send['sk'] = open(f"sk_{ep}.txt", 'r').read()
+            if os.path.exists(f"k_sign_{ep}.txt"):
+                keys_to_send['k_sign'] = open(f"k_sign_{ep}.txt", 'r').read()
+        except Exception:
+            pass
     
     except Exception as e:
         print(f"ERROR - Could not read key files: {e}")
@@ -468,13 +499,14 @@ def send_update_button_click(file_name):
                 values['ct'] = trans['ct']
                 values['pi'] = trans['pi']
                 values['pk'] = trans['pk']
+                values['epoch'] = trans.get('epoch', read_epoch())
 
     if len(blockchain.rpis)<=0:
         print("ERROR - There are no RPis registered!")
     for rpi_address in blockchain.rpis:
         print("INFO - Sending " + values['name'] + " to RPi " + rpi_address)
         blockchain.send_updates(rpi_address, values['name'], values['file'], values['file_hash'],
-                                values['ct'], values['pi'], values['pk']) # send_updates >> from Definition
+                                values['ct'], values['pi'], values['pk'], values.get('epoch')) # send_updates >> from Definition
 
 def send_update_mqtt_button_click(file_name):
     if not MQTT_AVAILABLE:
@@ -491,7 +523,8 @@ def send_update_mqtt_button_click(file_name):
                     'file_hash': trans['file_hash'],
                     'ct': trans['ct'],
                     'pi': trans['pi'],
-                    'pk': trans['pk']
+                    'pk': trans['pk'],
+                    'epoch': trans.get('epoch', read_epoch())
                 }
                 print("INFO - File found in block " + str(blocks['index']))
                 break
@@ -529,6 +562,14 @@ def send_update():
 
     button_send = Button(window_su, text="Send (HTTP)", command=lambda: send_update_button_click(cb.get())).place(x=_column(3)-130, y=_line(2))
     button_send_mqtt = Button(window_su, text="Send (MQTT)", command=lambda: send_update_mqtt_button_click(cb.get())).place(x=_column(3)-15, y=_line(2))
+
+def rotate_epoch():
+    cur = read_epoch()
+    new_epoch = cur + 1
+    if write_epoch(new_epoch):
+        messagebox.showinfo("Epoch", f"Rotated epoch to {new_epoch}. Distribute keys for new epoch.")
+    else:
+        messagebox.showerror("Epoch", "Failed to write epoch file")
 
 # def verify_software():
 def verify_file():
@@ -601,6 +642,8 @@ def _create_main_window_structure():
     Connection_Menu.add_command(label="Add RPi", command=add_rpi)
     Connection_Menu.add_command(label="Print RPi list", command=print_rpi)
     Connection_Menu.add_command(label="Send Keys to RPIs", command=lambda: send_keys_to_rpi())
+    Connection_Menu.add_separator()
+    Connection_Menu.add_command(label="Rotate Epoch", command=rotate_epoch)
     Connection_Menu.add_separator()
     Connection_Menu.add_command(label="Connect Blockchain", command=blockchain_thread.start)
     Connection_Menu.add_command(label="Disconnect and Exit", command=disconnect_exit)
