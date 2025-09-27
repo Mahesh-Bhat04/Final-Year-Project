@@ -102,21 +102,26 @@ def process_update(values):
         print("Missing values in update payload")
         return False
 
+    # Epoch must be present and acceptable before touching disk
+    msg_epoch_raw = values.get('epoch')
+    if msg_epoch_raw is None:
+        print("Rejected message: missing epoch in payload")
+        return False
     try:
-        print("Writing file as ct")
-        with open("ct", 'w') as ct_write:
-            ct_write.write(values['ct'])
-        print("Writing file as pk.txt")
-        with open("pk.txt", 'w') as pk_write:
-            pk_write.write(values['pk'])
-    except Exception as e:
-        print(f"ERROR writing ct/pk files: {e}")
+        msg_epoch = int(str(msg_epoch_raw))
+    except Exception:
+        print(f"Rejected message: invalid epoch value: {msg_epoch_raw}")
+        return False
+
+    current_epoch = read_epoch_file()
+    acceptable_epochs = {current_epoch, max(1, current_epoch - 1)}
+    if msg_epoch not in acceptable_epochs:
+        print(f"Rejected message due to epoch mismatch. msg_epoch={msg_epoch} current={current_epoch}")
         return False
 
     name = values['name']
     file = values['file']
     pi = values['pi']
-    msg_epoch = int(values.get('epoch', read_epoch_file()))
 
     try:
         ct = bytesToObject(values['ct'].encode('utf8'), groupObj)
@@ -142,10 +147,16 @@ def process_update(values):
         return False
 
     # Enforce epoch acceptance window (current or previous)
-    current_epoch = read_epoch_file()
-    acceptable_epochs = {current_epoch, max(1, current_epoch - 1)}
-    if msg_epoch not in acceptable_epochs:
-        print(f"Rejected message due to epoch mismatch. msg_epoch={msg_epoch} current={current_epoch}")
+    # Passed epoch check: now persist ct/pk
+    try:
+        print("Writing file as ct")
+        with open("ct", 'w') as ct_write:
+            ct_write.write(values['ct'])
+        print("Writing file as pk.txt")
+        with open("pk.txt", 'w') as pk_write:
+            pk_write.write(values['pk'])
+    except Exception as e:
+        print(f"ERROR writing ct/pk files: {e}")
         return False
 
     print("INFO - Received message (HTTP/MQTT)...")
