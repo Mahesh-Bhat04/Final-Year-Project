@@ -210,9 +210,14 @@ def receive_keys():
     
     try:
         # Save epoch if provided
-        epoch = int(values.get('epoch', read_epoch_file()))
+        old_epoch = read_epoch_file()
+        epoch = int(values.get('epoch', old_epoch))
         with open('epoch.txt', 'w') as ef:
             ef.write(str(epoch))
+        if epoch != old_epoch:
+            print(f"Epoch updated on RPi: {old_epoch} -> {epoch}")
+        else:
+            print(f"Epoch confirmed on RPi: {epoch}")
 
         # Save and load pk (current) and versioned
         with open("pk.txt", 'w') as f:
