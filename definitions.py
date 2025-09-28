@@ -67,7 +67,7 @@ class Blockchain:
             aux_trans['pk'] = transaction['pk'] # Enough, no need anything else
             print(aux_trans)
 
-    def send_updates(self, rpi_address, name, file, file_hash, ct, pi, pk, epoch=None):
+    def send_updates(self, rpi_address, name, file, file_hash, ct, pi, pk, epoch=None, uri=None):
         update = {
             'name': name,
             'file': file,
@@ -78,6 +78,8 @@ class Blockchain:
         }
         if epoch is not None:
             update['epoch'] = epoch
+        if uri is not None:
+            update['uri'] = uri
 
         try:
             # Send as JSON with proper headers
@@ -336,7 +338,7 @@ class Blockchain:
 
         return block
 
-    def new_transaction(self, name, file, file_hash, ct, pi, pk, epoch=None):
+    def new_transaction(self, name, file, file_hash, ct, pi, pk, epoch=None, uri=None):
         transaction = {
             'name': name,
             'file': file,
@@ -347,6 +349,8 @@ class Blockchain:
         }
         if epoch is not None:
             transaction['epoch'] = epoch
+        if uri is not None:
+            transaction['uri'] = uri
         self.current_transactions.append(transaction)
 
         # we send this transaction over the nodes network

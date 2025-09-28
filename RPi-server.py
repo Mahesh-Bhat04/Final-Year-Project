@@ -2,6 +2,7 @@ from tkinter import *
 from CPABSC_Hybrid_R import *
 import os
 from flask import Flask, jsonify, request
+import requests as httpx
 from uuid import uuid4
 import threading
 import hashlib
@@ -120,7 +121,23 @@ def process_update(values):
         return False
 
     name = values['name']
-    file = values['file']
+    # Fetch file: prefer off-chain URI if provided; else use inline 'file'
+    file_b64 = values.get('file')
+    uri = values.get('uri')
+    if (file_b64 is None or file_b64 == '') and uri is not None:
+        try:
+            print(f"Fetching off-chain file from {uri}")
+            resp = httpx.get(uri, timeout=10)
+            resp.raise_for_status()
+            content = resp.content
+            file_b64 = base64.b64encode(content).decode('ascii')
+        except Exception as e:
+            print(f"ERROR fetching off-chain file: {e}")
+            return False
+    if file_b64 is None:
+        print("ERROR - No file content provided (inline or off-chain)")
+        return False
+    file = file_b64
     pi = values['pi']
 
     try:

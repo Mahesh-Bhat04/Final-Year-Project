@@ -11,10 +11,18 @@ from definitions import *
 from random import SystemRandom
 from uuid import uuid4
 import requests
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from pyclamd import *
 import base64
 import json
+# Off-chain storage configuration
+OFFCHAIN_DIR = os.environ.get('OFFCHAIN_DIR', 'offchain')
+OFFCHAIN_BASE_URL = os.environ.get('OFFCHAIN_BASE_URL', 'http://127.0.0.1:5000/files')
+OFFCHAIN_INLINE = os.environ.get('OFFCHAIN_INLINE', '1') != '0'
+try:
+    os.makedirs(OFFCHAIN_DIR, exist_ok=True)
+except Exception:
+    pass
 # Epoch management
 EPOCH_FILE = os.environ.get('EPOCH_FILE', 'epoch.txt')
 def read_epoch():
@@ -150,6 +158,9 @@ blockchain.load_values() # From definitions
 
 # Instantiate the Node
 app = Flask(__name__)
+@app.route('/files/<path:fname>', methods=['GET'])
+def serve_offchain_file(fname):
+    return send_from_directory(OFFCHAIN_DIR, fname, as_attachment=False)
 
 # Other separated thread to mining and sharing blockchain periodically
 blockchain_spread = threading.Thread(name="spread", target=periodic_spread, daemon=True)
@@ -332,8 +343,18 @@ def _upload_file(window, filepath, filename, text_keygen, text_keygentime, text_
     _hash = hashlib.sha256(_file).hexdigest()
     _ct = str(objectToBytes(ct, groupObj), 'utf-8')
 
+    # Off-chain stage
+    try:
+        import shutil
+        target_path = os.path.join(OFFCHAIN_DIR, filename)
+        shutil.copy2(filepath, target_path)
+    except Exception as e:
+        print(f"ERROR - Could not stage file for offchain serving: {e}")
+    uri = f"{OFFCHAIN_BASE_URL}/{filename}"
+
     current_epoch = read_epoch()
-    _newblock = blockchain.new_transaction(filename, _file_str, _hash, _ct, _pi, _pk, epoch=current_epoch)
+    inline_file = _file_str if OFFCHAIN_INLINE else ''
+    _newblock = blockchain.new_transaction(filename, inline_file, _hash, _ct, _pi, _pk, epoch=current_epoch, uri=uri)
 
     # Fill form fields
     text_keygen.set(str(objectToBytes(pk,groupObj), 'utf-8'))
@@ -500,6 +521,8 @@ def send_update_button_click(file_name):
                 values['pi'] = trans['pi']
                 values['pk'] = trans['pk']
                 values['epoch'] = trans.get('epoch', read_epoch())
+                if 'uri' in trans:
+                    values['uri'] = trans['uri']
 
     if len(blockchain.rpis)<=0:
         print("ERROR - There are no RPis registered!")
@@ -531,6 +554,12 @@ def send_update_mqtt_button_click(file_name):
     if not payload:
         messagebox.showerror("MQTT", "File not found in chain")
         return
+    if 'uri' not in payload:
+        for blocks in blockchain.chain:
+            for trans in blocks['transactions']:
+                if trans['name'] == file_name and 'uri' in trans:
+                    payload['uri'] = trans['uri']
+                    break
 
     broker = os.environ.get('MQTT_BROKER', 'localhost')
     port = int(os.environ.get('MQTT_PORT', '1883'))
